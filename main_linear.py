@@ -10,7 +10,7 @@ import torch.backends.cudnn as cudnn
 
 from main_ce import set_loader
 from util import AverageMeter
-from util import adjust_learning_rate, warmup_learning_rate, accuracy
+from util import adjust_learning_rate, warmup_learning_rate, accuracy, confusion_matrix, compute_kappa_from_conf_mat
 from util import set_optimizer
 from networks.resnet_big import SupConResNet, LinearClassifier
 
@@ -50,7 +50,12 @@ def parse_option():
     # model dataset
     parser.add_argument('--model', type=str, default='resnet50')
     parser.add_argument('--dataset', type=str, default='cifar10',
-                        choices=['cifar10', 'cifar100'], help='dataset')
+                        choices=['cifar10', 'cifar100', 'path'], help='dataset')
+    parser.add_argument('--data_folder', type=str, default=None, help='path to custom dataset')
+    parser.add_argument('--mean', type=str, help='mean of dataset in path in form of str tuple')
+    parser.add_argument('--std', type=str, help='std of dataset in path in form of str tuple')
+    parser.add_argument('--n_cls', type=int, default=4, help='number of classes')
+    parser.add_argument('--size', type=int, default=32, help='parameter for Crop after RandomRotation')
 
     # other setting
     parser.add_argument('--cosine', action='store_true',
@@ -60,11 +65,13 @@ def parse_option():
 
     parser.add_argument('--ckpt', type=str, default='',
                         help='path to pre-trained model')
+    parser.add_argument('--trial', type=str, default='0',
+                        help='id for recording multiple runs')
 
     opt = parser.parse_args()
 
     # set the path according to the environment
-    opt.data_folder = './datasets/'
+    opt.data_folder = './datasets/' if not opt.data_folder else opt.data_folder
 
     iterations = opt.lr_decay_epochs.split(',')
     opt.lr_decay_epochs = list([])
@@ -94,6 +101,8 @@ def parse_option():
         opt.n_cls = 10
     elif opt.dataset == 'cifar100':
         opt.n_cls = 100
+    elif opt.dataset == 'path':
+        pass
     else:
         raise ValueError('dataset not supported: {}'.format(opt.dataset))
 
@@ -139,6 +148,7 @@ def train(train_loader, model, classifier, criterion, optimizer, epoch, opt):
     top1 = AverageMeter()
 
     end = time.time()
+    conf_mat = torch.zeros(opt.n_cls, opt.n_cls)
     for idx, (images, labels) in enumerate(train_loader):
         data_time.update(time.time() - end)
 
@@ -157,7 +167,8 @@ def train(train_loader, model, classifier, criterion, optimizer, epoch, opt):
 
         # update metric
         losses.update(loss.item(), bsz)
-        acc1, acc5 = accuracy(output, labels, topk=(1, 5))
+        acc1, acc5 = accuracy(output, labels, topk=(1, min(opt.n_cls, 5)))
+        conf_mat = confusion_matrix(conf_mat, output, labels)
         top1.update(acc1[0], bsz)
 
         # SGD
@@ -180,6 +191,25 @@ def train(train_loader, model, classifier, criterion, optimizer, epoch, opt):
                    data_time=data_time, loss=losses, top1=top1))
             sys.stdout.flush()
 
+    print('Confusion Matrix')
+    print(conf_mat)
+    print('Class Accuracy')
+    class_acc = (conf_mat.diag() / conf_mat.sum(1)).cpu().numpy()
+
+    print(class_acc)
+    print("kappa")
+    kappa = compute_kappa_from_conf_mat(conf_mat)
+    print(kappa)
+    acc = top1.avg.cpu().numpy()
+
+    results = open('results_train_{opt.trial}.txt'.format(opt=opt), 'a+')
+    results.write(str(acc) + ' ')
+    for res in class_acc:
+        results.write(str(res) + ' ')
+    results.write("kappa: " + str(kappa) + ' ')
+    results.write('\n')
+    results.close()
+
     return losses.avg, top1.avg
 
 
@@ -191,6 +221,7 @@ def validate(val_loader, model, classifier, criterion, opt):
     batch_time = AverageMeter()
     losses = AverageMeter()
     top1 = AverageMeter()
+    conf_mat = torch.zeros(opt.n_cls, opt.n_cls)
 
     with torch.no_grad():
         end = time.time()
@@ -205,7 +236,8 @@ def validate(val_loader, model, classifier, criterion, opt):
 
             # update metric
             losses.update(loss.item(), bsz)
-            acc1, acc5 = accuracy(output, labels, topk=(1, 5))
+            acc1, acc5 = accuracy(output, labels, topk=(1, min(opt.n_cls, 5)))
+            conf_mat = confusion_matrix(conf_mat, output, labels)
             top1.update(acc1[0], bsz)
 
             # measure elapsed time
@@ -221,6 +253,24 @@ def validate(val_loader, model, classifier, criterion, opt):
                        loss=losses, top1=top1))
 
     print(' * Acc@1 {top1.avg:.3f}'.format(top1=top1))
+    print('Confusion Matrix')
+    print(conf_mat)
+    print('Class Accuracy')
+    class_acc = (conf_mat.diag() / conf_mat.sum(1)).cpu().numpy()
+
+    print(class_acc)
+    print("kappa")
+    kappa = compute_kappa_from_conf_mat(conf_mat)
+    print(kappa)
+    acc = top1.avg.cpu().numpy()
+
+    results = open('results_{opt.trial}.txt'.format(opt=opt), 'a+')
+    results.write(str(acc) + ' ')
+    for res in class_acc:
+        results.write(str(res) + ' ')
+    results.write("kappa: " + str(kappa) + ' ')
+    results.write('\n')
+    results.close()
     return losses.avg, top1.avg
 
 
@@ -250,6 +300,7 @@ def main():
             epoch, time2 - time1, acc))
 
         # eval for one epoch
+        # if epoch % 50 == 1:
         loss, val_acc = validate(val_loader, model, classifier, criterion, opt)
         if val_acc > best_acc:
             best_acc = val_acc

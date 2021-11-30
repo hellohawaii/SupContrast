@@ -4,7 +4,7 @@ import math
 import numpy as np
 import torch
 import torch.optim as optim
-
+from sklearn.metrics import cohen_kappa_score
 
 class TwoCropTransform:
     """Create two crops of the same image"""
@@ -45,9 +45,37 @@ def accuracy(output, target, topk=(1,)):
 
         res = []
         for k in topk:
-            correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+            correct_k = correct[:k].contiguous().view(-1).float().sum(0, keepdim=True)
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
+
+# copy from https://github.com/RaphaelWag/SupContrast
+def confusion_matrix(conf_mat, output, target, topk=(1,)):
+    with torch.no_grad():
+        maxk = max(topk)
+        _, pred = output.topk(maxk, 1, True, True)
+        pred = pred.t()
+        for t, p in zip(target.view(-1), pred.view(-1)):
+            conf_mat[t.long(), p.long()] += 1
+
+    return conf_mat
+
+
+def compute_kappa_from_conf_mat(conf_mat):
+    conf_cpu = conf_mat.cpu().numpy().astype(int)
+    # conf_cpu = conf_mat
+    current_collected_num = 0
+    total_num = conf_cpu.sum()
+    pred_x = np.zeros(total_num)
+    pred_y = np.zeros(total_num)
+    for i in range(conf_cpu.shape[0]):
+        for j in range(conf_cpu.shape[0]):
+            ij_num = conf_cpu[i,j]
+            pred_x[current_collected_num: current_collected_num+ij_num] = i
+            pred_y[current_collected_num: current_collected_num+ij_num] = j
+            current_collected_num += ij_num
+    kappa = cohen_kappa_score(pred_x, pred_y, weights='quadratic')
+    return kappa
 
 
 def adjust_learning_rate(args, optimizer, epoch):

@@ -57,7 +57,7 @@ def parse_option():
     parser.add_argument('--mean', type=str, help='mean of dataset in path in form of str tuple')
     parser.add_argument('--std', type=str, help='std of dataset in path in form of str tuple')
     parser.add_argument('--data_folder', type=str, default=None, help='path to custom dataset')
-    parser.add_argument('--size', type=int, default=32, help='parameter for RandomResizedCrop')
+    parser.add_argument('--size', type=int, default=32, help='parameter for Crop after RandomRotation')
 
     # method
     parser.add_argument('--method', type=str, default='SupCon',
@@ -66,6 +66,8 @@ def parse_option():
     # temperature
     parser.add_argument('--temp', type=float, default=0.07,
                         help='temperature for loss function')
+    parser.add_argument('--contrast_mode', type=str, default='all',choices=['all', 'one'],
+                        help='contrast_mode for loss function')
 
     # other setting
     parser.add_argument('--cosine', action='store_true',
@@ -144,7 +146,11 @@ def set_loader(opt):
     normalize = transforms.Normalize(mean=mean, std=std)
 
     train_transform = transforms.Compose([
-        transforms.RandomResizedCrop(size=opt.size, scale=(0.2, 1.)),
+        transforms.Resize(size=opt.size, interpolation=transforms.InterpolationMode.BILINEAR),
+        # transforms.RandomResizedCrop(size=opt.size, scale=(0.2, 1.)),
+        transforms.RandomRotation(degrees=(-180, 180),interpolation=transforms.InterpolationMode.BILINEAR, expand=True),
+        # crop again because of the rotation
+        transforms.CenterCrop(size=opt.size),
         transforms.RandomHorizontalFlip(),
         transforms.RandomApply([
             transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)
@@ -178,7 +184,7 @@ def set_loader(opt):
 
 def set_model(opt):
     model = SupConResNet(name=opt.model)
-    criterion = SupConLoss(temperature=opt.temp)
+    criterion = SupConLoss(temperature=opt.temp, contrast_mode=opt.contrast_mode)
 
     # enable synchronized Batch Normalization
     if opt.syncBN:
@@ -214,7 +220,6 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
 
         # warm-up learning rate
         warmup_learning_rate(opt, epoch, idx, len(train_loader), optimizer)
-
         # compute loss
         features = model(images)
         f1, f2 = torch.split(features, [bsz, bsz], dim=0)

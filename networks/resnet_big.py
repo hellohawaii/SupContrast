@@ -7,7 +7,7 @@ Adapted from: https://github.com/bearpaw/pytorch-classification
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+import timm
 
 class BasicBlock(nn.Module):
     expansion = 1
@@ -133,8 +133,9 @@ def resnet34(**kwargs):
 
 
 def resnet50(**kwargs):
-    return ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
-
+    # return ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
+    timm_resnet50 = timm.create_model('resnet50', pretrained=True, num_classes=0)
+    return timm_resnet50
 
 def resnet101(**kwargs):
     return ResNet(Bottleneck, [3, 4, 23, 3], **kwargs)

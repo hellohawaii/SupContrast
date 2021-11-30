@@ -10,6 +10,7 @@ import tensorboard_logger as tb_logger
 import torch
 import torch.backends.cudnn as cudnn
 from torchvision import transforms, datasets
+from torch.utils.data import WeightedRandomSampler
 
 from util import AverageMeter
 from util import adjust_learning_rate, warmup_learning_rate, accuracy
@@ -123,18 +124,30 @@ def set_loader(opt):
     elif opt.dataset == 'cifar100':
         mean = (0.5071, 0.4867, 0.4408)
         std = (0.2675, 0.2565, 0.2761)
+    elif opt.dataset == 'path':
+        mean = eval(opt.mean)
+        std = eval(opt.std)
     else:
         raise ValueError('dataset not supported: {}'.format(opt.dataset))
     normalize = transforms.Normalize(mean=mean, std=std)
 
     train_transform = transforms.Compose([
-        transforms.RandomResizedCrop(size=32, scale=(0.2, 1.)),
+        # transforms.RandomResizedCrop(size=32, scale=(0.2, 1.)),
+        transforms.RandomRotation(degrees=(-180, 180), interpolation=transforms.InterpolationMode.BILINEAR,
+                                  expand=True),
+        # crop again because of the rotation
+        transforms.CenterCrop(size=opt.size),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         normalize,
     ])
 
     val_transform = transforms.Compose([
+        # transforms.RandomResizedCrop(size=32, scale=(0.2, 1.)),
+        transforms.RandomRotation(degrees=(-180, 180), interpolation=transforms.InterpolationMode.BILINEAR,
+                                  expand=True),
+        # crop again because of the rotation
+        transforms.CenterCrop(size=opt.size),
         transforms.ToTensor(),
         normalize,
     ])
@@ -153,15 +166,32 @@ def set_loader(opt):
         val_dataset = datasets.CIFAR100(root=opt.data_folder,
                                         train=False,
                                         transform=val_transform)
+    elif opt.dataset == 'path':
+        # train_dataset = datasets.ImageFolder(root=opt.data_folder + '/train',
+        #                                      transform=train_transform)
+        # val_dataset = datasets.ImageFolder(root=opt.data_folder + '/test',
+        #                                    transform=val_transform)
+        train_dataset = datasets.ImageFolder(root=opt.data_folder + '/train/image/',
+                                             transform=train_transform)
+        val_dataset = datasets.ImageFolder(root=opt.data_folder + '/val/image',
+                                           transform=val_transform)
     else:
         raise ValueError(opt.dataset)
 
     train_sampler = None
+    # counting for num of targets
+    from collections import Counter
+    class_count = Counter(train_dataset.targets)  # use dir(train_dataset) to show() all attributes
+    class_weights = {k: 1/v for k, v in class_count.items()}
+    item_weights = [class_weights[i] for i in train_dataset.targets]
+
+    train_sampler = WeightedRandomSampler(item_weights, len(train_dataset))
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=opt.batch_size, shuffle=(train_sampler is None),
         num_workers=opt.num_workers, pin_memory=True, sampler=train_sampler)
+        # num_workers=opt.num_workers, pin_memory=True, sampler=weighted_train_sampler)
     val_loader = torch.utils.data.DataLoader(
-        val_dataset, batch_size=256, shuffle=False,
+        val_dataset, batch_size=opt.batch_size, shuffle=False,
         num_workers=8, pin_memory=True)
 
     return train_loader, val_loader
