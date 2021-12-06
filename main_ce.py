@@ -132,22 +132,24 @@ def set_loader(opt):
     normalize = transforms.Normalize(mean=mean, std=std)
 
     train_transform = transforms.Compose([
-        # transforms.RandomResizedCrop(size=32, scale=(0.2, 1.)),
-        transforms.RandomRotation(degrees=(-180, 180), interpolation=transforms.InterpolationMode.BILINEAR,
-                                  expand=True),
-        # crop again because of the rotation
-        transforms.CenterCrop(size=opt.size),
+        transforms.Resize(size=opt.size, interpolation=transforms.InterpolationMode.BILINEAR),
+        # transforms.RandomResizedCrop(size=opt.size, scale=(0.8, 1.2), ratio=(0.8, 1.2)),
+        # transforms.RandomRotation(degrees=(-180, 180), interpolation=transforms.InterpolationMode.BILINEAR,
+        #                           expand=True),
+        # # crop again because of the rotation
+        # transforms.CenterCrop(size=opt.size),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         normalize,
     ])
 
     val_transform = transforms.Compose([
-        # transforms.RandomResizedCrop(size=32, scale=(0.2, 1.)),
-        transforms.RandomRotation(degrees=(-180, 180), interpolation=transforms.InterpolationMode.BILINEAR,
-                                  expand=True),
-        # crop again because of the rotation
-        transforms.CenterCrop(size=opt.size),
+        transforms.Resize(size=opt.size, interpolation=transforms.InterpolationMode.BILINEAR),
+        # transforms.RandomResizedCrop(size=opt.size, scale=(0.8, 1.2), ratio=(0.8, 1.2)),
+        # transforms.RandomRotation(degrees=(-180, 180), interpolation=transforms.InterpolationMode.BILINEAR,
+        #                           expand=True),
+        # # crop again because of the rotation
+        # transforms.CenterCrop(size=opt.size),
         transforms.ToTensor(),
         normalize,
     ])
