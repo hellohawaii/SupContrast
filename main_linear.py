@@ -4,15 +4,20 @@ import sys
 import argparse
 import time
 import math
+import os
 
 import torch
 import torch.backends.cudnn as cudnn
 
-from main_ce import set_loader
+# from main_ce import set_loader
+from create_dataloader import set_linear_loader
 from util import AverageMeter
 from util import adjust_learning_rate, warmup_learning_rate, accuracy, confusion_matrix, compute_kappa_from_conf_mat
 from util import set_optimizer
 from networks.resnet_big import SupConResNet, LinearClassifier
+
+import logging
+from pathlib import Path
 
 try:
     import apex
@@ -20,6 +25,7 @@ try:
 except ImportError:
     pass
 
+logger = logging.getLogger(__name__)
 
 def parse_option():
     parser = argparse.ArgumentParser('argument for training')
@@ -52,10 +58,8 @@ def parse_option():
     parser.add_argument('--dataset', type=str, default='cifar10',
                         choices=['cifar10', 'cifar100', 'path'], help='dataset')
     parser.add_argument('--data_folder', type=str, default=None, help='path to custom dataset')
-    parser.add_argument('--mean', type=str, help='mean of dataset in path in form of str tuple')
-    parser.add_argument('--std', type=str, help='std of dataset in path in form of str tuple')
     parser.add_argument('--n_cls', type=int, default=4, help='number of classes')
-    parser.add_argument('--size', type=int, default=32, help='parameter for Crop after RandomRotation')
+    # parser.add_argument('--size', type=int, default=32, help='parameter for Crop after RandomRotation')
 
     # other setting
     parser.add_argument('--cosine', action='store_true',
@@ -67,6 +71,11 @@ def parse_option():
                         help='path to pre-trained model')
     parser.add_argument('--trial', type=str, default='0',
                         help='id for recording multiple runs')
+
+    parser.add_argument('--oversample', action='store_true',
+                        help='using oversampling')
+    parser.add_argument('--resample_decay_rate', type=float, default=1,
+                        help='weight decay of resample')  # if set to 1, disable dynamic weight; if set to 0 is equally sample
 
     opt = parser.parse_args()
 
@@ -202,14 +211,17 @@ def train(train_loader, model, classifier, criterion, optimizer, epoch, opt):
     print(kappa)
     acc = top1.avg.cpu().numpy()
 
-    results = open('results_train_{opt.trial}.txt'.format(opt=opt), 'a+')
-    results.write(str(acc) + ' ')
-    for res in class_acc:
-        results.write(str(res) + ' ')
-    results.write("kappa: " + str(kappa) + ' ')
-    results.write('\n')
-    results.close()
-
+    # results = open('results_train_{opt.trial}.txt'.format(opt=opt), 'a+')
+    # results.write(str(acc) + ' ')
+    # for res in class_acc:
+    #     results.write(str(res) + ' ')
+    # results.write("kappa: " + str(kappa) + ' ')
+    # results.write('\n')
+    # results.close()
+    logger.info("************EPOCH: %d *************" % epoch)
+    logger.info("train_acc: {acc:.3f}".format(acc=acc))
+    logger.info("train_Confusion Matrix: \n%s" % conf_mat)
+    logger.info("train_kappa: {kappa:.3f}".format(kappa=kappa))
     return losses.avg, top1.avg
 
 
@@ -264,13 +276,17 @@ def validate(val_loader, model, classifier, criterion, opt):
     print(kappa)
     acc = top1.avg.cpu().numpy()
 
-    results = open('results_{opt.trial}.txt'.format(opt=opt), 'a+')
-    results.write(str(acc) + ' ')
-    for res in class_acc:
-        results.write(str(res) + ' ')
-    results.write("kappa: " + str(kappa) + ' ')
-    results.write('\n')
-    results.close()
+    # results = open('results_{opt.trial}.txt'.format(opt=opt), 'a+')
+    # results.write(str(acc) + ' ')
+    # for res in class_acc:
+    #     results.write(str(res) + ' ')
+    # results.write("kappa: " + str(kappa) + ' ')
+    # results.write('\n')
+    # results.close()
+
+    logger.info("test_acc: {acc:.3f}".format(acc=acc))
+    logger.info("test_Confusion Matrix: \n%s" % conf_mat)
+    logger.info("test_kappa: {kappa:.3f}".format(kappa=kappa))
     return losses.avg, top1.avg
 
 
@@ -278,8 +294,28 @@ def main():
     best_acc = 0
     opt = parse_option()
 
+    ckpt_located_folder = os.path.dirname(opt.ckpt)
+    log_name = os.path.basename(opt.ckpt)[:-4]  # name the log file use the name of ckpt
+    if opt.oversample:
+        if opt.resample_decay_rate == 1.0:
+            log_name = '{}_oversample'.format(log_name)
+        elif opt.resample_decay_rate == 0.0:
+            log_name = '{}_nooversample'.format(log_name)
+        else:
+            log_name = '{}_dynamicsample_decay_{}'.format(log_name, opt.resample_decay_rate)
+    else:
+        log_name = '{}_nooversample'.format(log_name)
+    log_file_path = os.path.join(ckpt_located_folder, log_name+'_linear_{trial}.log'.format(trial=opt.trial))
+    logging.basicConfig(filename=log_file_path,
+                        format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
+                        datefmt='%m/%d/%Y %H:%M:%S',
+                        level=logging.INFO)
+    logger.info("***************** input args *****************")
+    logger.info(opt)
+    logger.info("***************** end of input args *****************")
+
     # build data loader
-    train_loader, val_loader = set_loader(opt)
+    train_loader, val_loader, train_sampler = set_linear_loader(opt)
 
     # build model and criterion
     model, classifier, criterion = set_model(opt)
@@ -298,6 +334,8 @@ def main():
         time2 = time.time()
         print('Train epoch {}, total time {:.2f}, accuracy:{:.2f}'.format(
             epoch, time2 - time1, acc))
+
+        train_sampler.step()
 
         # eval for one epoch
         # if epoch % 50 == 1:

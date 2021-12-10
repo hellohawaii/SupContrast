@@ -17,4 +17,4 @@ python main_supcon.py \
 --mean "(0.3809, 0.2645, 0.1888)" \
 --std "(0.2911, 0.2111, 0.1711)" \
 --num_workers 10 \
---trial train_according2issue
+--trial train_according2issue_png_1210

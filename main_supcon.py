@@ -11,11 +11,14 @@ import torch
 import torch.backends.cudnn as cudnn
 from torchvision import transforms, datasets
 
-from util import TwoCropTransform, AverageMeter
+from util import AverageMeter
 from util import adjust_learning_rate, warmup_learning_rate
 from util import set_optimizer, save_model
 from networks.resnet_big import SupConResNet
 from losses import SupConLoss
+from create_dataloader import set_contrast_loader
+
+import logging
 
 try:
     import apex
@@ -23,13 +26,14 @@ try:
 except ImportError:
     pass
 
+logger_logging = logging.getLogger(__name__)
 
 def parse_option():
     parser = argparse.ArgumentParser('argument for training')
 
     parser.add_argument('--print_freq', type=int, default=10,
                         help='print frequency')
-    parser.add_argument('--save_freq', type=int, default=50,
+    parser.add_argument('--save_freq', type=int, default=10,
                         help='save frequency')
     parser.add_argument('--batch_size', type=int, default=256,
                         help='batch_size')
@@ -54,10 +58,8 @@ def parse_option():
     parser.add_argument('--model', type=str, default='resnet50')
     parser.add_argument('--dataset', type=str, default='cifar10',
                         choices=['cifar10', 'cifar100', 'path'], help='dataset')
-    parser.add_argument('--mean', type=str, help='mean of dataset in path in form of str tuple')
-    parser.add_argument('--std', type=str, help='std of dataset in path in form of str tuple')
     parser.add_argument('--data_folder', type=str, default=None, help='path to custom dataset')
-    parser.add_argument('--size', type=int, default=32, help='parameter for Crop after RandomRotation')
+    # parser.add_argument('--size', type=int, default=32, help='parameter for Crop after RandomRotation')
 
     # method
     parser.add_argument('--method', type=str, default='SupCon',
@@ -82,10 +84,10 @@ def parse_option():
     opt = parser.parse_args()
 
     # check if dataset is path that passed required arguments
-    if opt.dataset == 'path':
-        assert opt.data_folder is not None \
-            and opt.mean is not None \
-            and opt.std is not None
+    # if opt.dataset == 'path':
+    #     assert opt.data_folder is not None \
+    #         and opt.mean is not None \
+    #         and opt.std is not None
 
     # set the path according to the environment
     if opt.data_folder is None:
@@ -128,63 +130,6 @@ def parse_option():
         os.makedirs(opt.save_folder)
 
     return opt
-
-
-def set_loader(opt):
-    # construct data loader
-    if opt.dataset == 'cifar10':
-        mean = (0.4914, 0.4822, 0.4465)
-        std = (0.2023, 0.1994, 0.2010)
-    elif opt.dataset == 'cifar100':
-        mean = (0.5071, 0.4867, 0.4408)
-        std = (0.2675, 0.2565, 0.2761)
-    elif opt.dataset == 'path':
-        mean = eval(opt.mean)
-        std = eval(opt.std)
-    else:
-        raise ValueError('dataset not supported: {}'.format(opt.dataset))
-    normalize = transforms.Normalize(mean=mean, std=std)
-
-    train_transform = transforms.Compose([
-        transforms.Resize(size=512, interpolation=transforms.InterpolationMode.BILINEAR),
-        transforms.RandomRotation(degrees=(-180, 180), interpolation=transforms.InterpolationMode.BILINEAR,
-                                  expand=True),
-        transforms.CenterCrop(size=512),
-        # crop again because of the rotation
-
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomVerticalFlip(),
-        transforms.RandomApply([
-            transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)
-        ], p=0.8),
-
-        transforms.RandomResizedCrop(size=opt.size, scale=(0.3, 1.2), ratio=(0.3, 1.2)),
-
-        transforms.RandomGrayscale(p=0.2),
-        transforms.ToTensor(),
-        normalize,
-    ])
-
-    if opt.dataset == 'cifar10':
-        train_dataset = datasets.CIFAR10(root=opt.data_folder,
-                                         transform=TwoCropTransform(train_transform),
-                                         download=True)
-    elif opt.dataset == 'cifar100':
-        train_dataset = datasets.CIFAR100(root=opt.data_folder,
-                                          transform=TwoCropTransform(train_transform),
-                                          download=True)
-    elif opt.dataset == 'path':
-        train_dataset = datasets.ImageFolder(root=opt.data_folder,
-                                            transform=TwoCropTransform(train_transform))
-    else:
-        raise ValueError(opt.dataset)
-
-    train_sampler = None
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=opt.batch_size, shuffle=(train_sampler is None),
-        num_workers=opt.num_workers, pin_memory=True, sampler=train_sampler)
-
-    return train_loader
 
 
 def set_model(opt):
@@ -265,8 +210,15 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
 def main():
     opt = parse_option()
 
+    log_file_path = os.path.join(opt.save_folder, 'contrast_training.log')
+    logging.basicConfig(filename=log_file_path,
+                        format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
+                        datefmt='%m/%d/%Y %H:%M:%S',
+                        level=logging.INFO)
+    logger_logging.info(opt)
+
     # build data loader
-    train_loader = set_loader(opt)
+    train_loader = set_contrast_loader(opt)
 
     # build model and criterion
     model, criterion = set_model(opt)
