@@ -5,9 +5,11 @@ import sys
 import argparse
 import time
 import math
-
+print(0)
 import tensorboard_logger as tb_logger
+print(11)
 import torch
+print(22)
 import torch.backends.cudnn as cudnn
 from torchvision import transforms, datasets
 
