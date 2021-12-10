@@ -3,7 +3,7 @@
 # 加载环境
 module load anaconda/2020.11
 module load cuda/11.1
-source activate SupCon
+source activate torch
 
 python main_supcon.py \
 --batch_size 160 \
